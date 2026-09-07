@@ -2,8 +2,10 @@ package com.fredoseep.pacewatcher;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -39,7 +41,7 @@ public class MainActivity extends Activity {
     private Button floatingBtn;
     private ScrollView terminalScroll;
     private TextView terminalText;
-
+    private AudioManager audioManager;
     // 自动隐藏逻辑
     private final Handler hideHandler = new Handler(Looper.getMainLooper());
     private final Runnable hideRunnable = () -> {
@@ -54,6 +56,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         // 保持屏幕常亮
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -67,6 +70,7 @@ public class MainActivity extends Activity {
         webView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -74,6 +78,16 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient());
         rootLayout.addView(webView);
 
+
+// 在 onCreate 中初始化 WebView 之后，请求不独占的音频焦点
+        AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager != null) {
+            audioManager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK // 关键：允许与其它音频（如YouTube）同时播放并降低音量混音
+            );
+        }
         // 2. 初始化 Terminal 面板 (中层)
         terminalScroll = new ScrollView(this);
         FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(
@@ -134,7 +148,20 @@ public class MainActivity extends Activity {
         }
         return super.dispatchTouchEvent(ev);
     }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.resumeTimers();
+        }
+    }
 
+    @SuppressLint("MissingSuperCall")
+    @Override
+    protected void onPause() {
+
+    }
     private void wakeUpFloatingButton() {
         if (terminalScroll.getVisibility() == View.GONE) {
             floatingBtn.setVisibility(View.VISIBLE);
@@ -162,9 +189,24 @@ public class MainActivity extends Activity {
                         if (!newStreamer.equals(currentStreamer)) {
                             currentStreamer = newStreamer;
                             logToTerminal("发现新 Pace，正在切换频道至: " + currentStreamer);
+                            runOnUiThread(() -> {
+                                webView.loadUrl("about:blank");
+                            });
+                            Thread.sleep(500);
+
 
                             runOnUiThread(() -> {
-                                String url = "https://player.twitch.tv/?channel=" + currentStreamer + "&parent=twitch.tv";
+                                // 核心判断：当前系统是否有其他媒体（如 YouTube）正在播放声音
+                                boolean isAudioBusy = audioManager != null && audioManager.isMusicActive();
+
+                                // 根据占用状态，动态决定静音参数
+                                String mutedParam = isAudioBusy ? "true" : "false";
+
+                                // 拼接 URL
+                                String url = "https://player.twitch.tv/?channel=" + currentStreamer +
+                                        "&parent=twitch.tv&muted=" + mutedParam;
+
+                                logToTerminal("换台: " + currentStreamer + " | 智能静音: " + mutedParam);
                                 webView.loadUrl(url);
                             });
                         } else {
