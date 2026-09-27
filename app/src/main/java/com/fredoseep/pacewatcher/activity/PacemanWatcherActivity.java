@@ -1,4 +1,4 @@
-package com.fredoseep.pacewatcher;
+package com.fredoseep.pacewatcher.activity;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -32,7 +32,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-public class MainActivity extends Activity {
+public class PacemanWatcherActivity extends Activity {
     private WebView webView;
     private String currentStreamer = "";
     private boolean isRunning = true;

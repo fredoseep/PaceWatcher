@@ -6,18 +6,33 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:theme="@style/Theme.AppCompat.NoActionBar"> <!-- 隐藏顶部标题栏 -->
 
         <activity
-            android:name=".MainActivity"
+            android:name=".activity.PacemanWatcherActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"> <!-- 防止旋转屏幕时重新加载 -->
+        </activity>
+        <activity
+            android:name=".activity.MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize"> <!-- 防止旋转屏幕时重新加载 -->
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
+        <activity
+            android:name=".activity.RankedVodActivity"
+            android:screenOrientation="landscape"
+            android:exported="false" />
+        <activity
+            android:name=".activity.RankedSelectActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
     </application>
+
 </manifest>
