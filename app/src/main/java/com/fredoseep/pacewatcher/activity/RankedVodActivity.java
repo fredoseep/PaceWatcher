@@ -1,5 +1,6 @@
 package com.fredoseep.pacewatcher.activity;
 
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -40,6 +41,12 @@ public class RankedVodActivity extends AppCompatActivity {
         if (overlay != null) overlay.setVisibility(View.GONE);
     };
     private boolean playerReady;
+    private boolean initialPositionApplied;
+    private String videoId;
+    private long initialPositionMs;
+    private long lastSavedAt;
+    private long pendingSeekMs = -1;
+    private long pendingSeekAt;
     private long positionMs;
     private long durationMs;
     private final Runnable poll = new Runnable() {
@@ -54,10 +61,34 @@ public class RankedVodActivity extends AppCompatActivity {
                         double d = progress.optDouble("d", 0);
                         if (Double.isFinite(p) && Double.isFinite(d) && d > 0) {
                             playerReady = true;
-                            positionMs = Math.max(0, (long) (p * 1000));
                             durationMs = (long) (d * 1000);
+                            if (!initialPositionApplied) {
+                                initialPositionApplied = true;
+                                positionMs = Math.min(initialPositionMs, durationMs);
+                                if (positionMs > 0 && Math.abs((long) (p * 1000) - positionMs) > 5000) {
+                                    seekTo(positionMs);
+                                }
+                            } else {
+                                long reportedMs = Math.max(0, (long) (p * 1000));
+                                if (pendingSeekMs >= 0) {
+                                    if (Math.abs(reportedMs - pendingSeekMs) <= 2000) {
+                                        pendingSeekMs = -1;
+                                        positionMs = reportedMs;
+                                    } else if (android.os.SystemClock.elapsedRealtime() - pendingSeekAt >= 8000) {
+                                        pendingSeekMs = -1;
+                                        positionMs = reportedMs;
+                                    } // Twitch 尚未完成 seek：保留拖动目标，避免旧位置覆盖它。
+                                } else {
+                                    positionMs = reportedMs;
+                                }
+                            }
                             markerBar.update(positionMs, durationMs);
                             status.setText(format(positionMs) + " / " + format(durationMs));
+                            long now = android.os.SystemClock.elapsedRealtime();
+                            if (now - lastSavedAt >= 5000) {
+                                savePosition();
+                                lastSavedAt = now;
+                            }
                         }
                     }
                 } catch (Exception ignored) { }
@@ -68,7 +99,7 @@ public class RankedVodActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        String videoId = parseTwitchVideoId(getIntent().getStringExtra(EXTRA_VOD_URL));
+        videoId = parseTwitchVideoId(getIntent().getStringExtra(EXTRA_VOD_URL));
         if (videoId == null) {
             TextView error = new TextView(this);
             error.setText("此链接不是可识别的 Twitch 回放地址");
@@ -109,6 +140,11 @@ public class RankedVodActivity extends AppCompatActivity {
         markerBar = new MatchMarkerBar(this);
         overlay.addView(markerBar, new LinearLayout.LayoutParams(-1, dp(42)));
         markerBar.setMarkers(markersMs);
+        markerBar.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                    || event.getActionMasked() == MotionEvent.ACTION_MOVE) showControls();
+            return false; // 继续交给 MatchMarkerBar.onTouchEvent 处理拖动
+        });
         markerBar.setOnSeekListener(position -> {
             seekTo(position);
             showControls();
@@ -132,7 +168,10 @@ public class RankedVodActivity extends AppCompatActivity {
         });
         overlay.setVisibility(View.GONE);
 
-        long start = markersMs.isEmpty() ? 0 : markersMs.first() / 1000;
+        SharedPreferences preferences = getSharedPreferences("ranked_vod_progress", MODE_PRIVATE);
+        long savedMs = preferences.getLong("vod_" + videoId, -1);
+        initialPositionMs = savedMs >= 0 ? savedMs : markersMs.isEmpty() ? 0 : markersMs.first();
+        long start = initialPositionMs / 1000;
         String html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
                 + "<style>html,body,#player{margin:0;width:100%;height:100%;min-width:400px;min-height:300px;background:#000;overflow:hidden}</style>"
                 + "<script src='https://player.twitch.tv/js/embed/v1.js'></script></head><body><div id='player'></div><script>"
@@ -172,7 +211,18 @@ public class RankedVodActivity extends AppCompatActivity {
     private void seekTo(long targetMs) {
         if (!playerReady || webView == null) return;
         long clamped = Math.max(0, Math.min(targetMs, durationMs));
+        positionMs = clamped;
+        pendingSeekMs = clamped;
+        pendingSeekAt = android.os.SystemClock.elapsedRealtime();
+        markerBar.update(positionMs, durationMs);
         webView.evaluateJavascript("window.matchPlayer.seek(" + clamped / 1000.0 + ");", null);
+        savePosition();
+    }
+
+    private void savePosition() {
+        if (!initialPositionApplied || videoId == null) return;
+        getSharedPreferences("ranked_vod_progress", MODE_PRIVATE)
+                .edit().putLong("vod_" + videoId, positionMs).apply();
     }
 
     private void showControls() {
@@ -199,7 +249,13 @@ public class RankedVodActivity extends AppCompatActivity {
 
     private int dp(float value) { return (int) (value * getResources().getDisplayMetrics().density + 0.5f); }
 
+    @Override protected void onPause() {
+        savePosition();
+        super.onPause();
+    }
+
     @Override protected void onDestroy() {
+        savePosition();
         handler.removeCallbacks(poll);
         handler.removeCallbacks(hideControls);
         if (webView != null) {

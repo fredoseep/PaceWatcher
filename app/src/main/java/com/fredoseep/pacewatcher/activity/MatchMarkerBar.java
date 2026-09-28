@@ -17,13 +17,18 @@ public class MatchMarkerBar extends View {
     private OnSeekListener listener;
     private long positionMs;
     private long durationMs;
+    private boolean dragging;
 
-    public MatchMarkerBar(Context context) { super(context); }
+    public MatchMarkerBar(Context context) {
+        super(context);
+        setClickable(true);
+        setContentDescription("回放进度条，可点击或拖动，黄色圆点表示比赛开始");
+    }
     public void setMarkers(Collection<Long> values) { markers.clear(); markers.addAll(values); invalidate(); }
     public void setOnSeekListener(OnSeekListener value) { listener = value; }
     public void update(long position, long duration) {
-        positionMs = position;
         durationMs = duration;
+        if (!dragging) positionMs = position;
         invalidate();
     }
 
@@ -48,16 +53,55 @@ public class MatchMarkerBar extends View {
                 center, 7f * getResources().getDisplayMetrics().density, paint);
     }
 
+    private long positionForTouch(float x, boolean snapToMarker) {
+        float left = 20f * getResources().getDisplayMetrics().density;
+        float usable = Math.max(1, getWidth() - 2 * left);
+        float fraction = Math.max(0, Math.min(1, (x - left) / usable));
+        long target = (long) (fraction * durationMs);
+        if (snapToMarker) {
+            long threshold = (long) (14f * getResources().getDisplayMetrics().density * durationMs / usable);
+            Long before = markers.floor(target);
+            Long after = markers.ceiling(target);
+            Long nearest = before;
+            if (nearest == null || after != null && after - target < target - nearest) nearest = after;
+            if (nearest != null && Math.abs(nearest - target) <= threshold) return nearest;
+        }
+        return target;
+    }
+
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (durationMs <= 0 || listener == null) return false;
-        if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE
-                || event.getAction() == MotionEvent.ACTION_UP) {
-            float left = 20f * getResources().getDisplayMetrics().density;
-            float usable = Math.max(1, getWidth() - 2 * left);
-            float fraction = Math.max(0, Math.min(1, (event.getX() - left) / usable));
-            listener.onSeek((long) (fraction * durationMs));
-            return true;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                dragging = true;
+                getParent().requestDisallowInterceptTouchEvent(true);
+                positionMs = positionForTouch(event.getX(), true);
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (!dragging) return false;
+                positionMs = positionForTouch(event.getX(), false);
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (!dragging) return false;
+                positionMs = positionForTouch(event.getX(), true);
+                dragging = false;
+                listener.onSeek(positionMs);
+                performClick();
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                dragging = false;
+                invalidate();
+                return true;
+            default:
+                return super.onTouchEvent(event);
         }
-        return super.onTouchEvent(event);
+    }
+
+    @Override public boolean performClick() {
+        super.performClick();
+        return true;
     }
 }
